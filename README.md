@@ -1,5 +1,7 @@
 # esp32-obd
 
+Work in progress — under active development. Features and wiring may change.
+
 A small ESP32-based OBD-II (CAN) reader and adapter.
 
 ## Overview
@@ -16,8 +18,10 @@ This repository contains firmware for an ESP32 that communicates with a vehicle'
 
 - ESP32 development board
 - CAN transceiver (e.g. SN65HVD230, MCP2551) connected to the ESP32 CAN pins
+- OLED display (e.g. SSD1306) connected via I2C for local status and telemetry
+- Addressable LED strip (e.g. WS2812) driven from a GPIO for visual feedback
 
-Wiring will depend on your transceiver — consult its datasheet and match TX/RX and power/GND.
+Wiring will depend on your transceiver, display and LED strip — consult their datasheets and match TX/RX, I2C SDA/SCL, power and GND.
 
 ## Build & Upload
 
@@ -28,10 +32,10 @@ platformio run
 platformio run --target upload
 ```
 
-Open the serial monitor at 115200 baud:
+Open the serial monitor at 9600 baud:
 
 ```bash
-platformio device monitor -b 115200
+platformio device monitor -b 9600
 ```
 
 If you need a specific environment, check `platformio.ini` for environment names.

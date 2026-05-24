@@ -1,0 +1,18 @@
+{
+  "pids": [
+    {
+      "pid": "0C",
+      "name": "Engine RPM",
+      "bytes": 2,
+      "formula": "((A*256)+B)/4",
+      "unit": "rpm"
+    },
+    {
+      "pid": "0D",
+      "name": "Vehicle Speed",
+      "bytes": 1,
+      "formula": "A",
+      "unit": "km/h"
+    }
+  ]
+}

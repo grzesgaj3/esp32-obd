@@ -5,7 +5,7 @@
 class OBD {
 public:
   OBD();
-  bool begin(int csPin = 5, int intPin = 4);
+  bool begin(int csPin = 21, int intPin = 8);
   void requestPID(uint8_t pid);
   void poll();
   uint16_t getRPM() const;

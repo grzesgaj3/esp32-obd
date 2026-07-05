@@ -4,7 +4,7 @@
 
 static MCP_CAN* CAN0 = nullptr;
 
-CANAdapter::CANAdapter() : _csPin(5), _intPin(4) {}
+CANAdapter::CANAdapter() : _csPin(21), _intPin(8) {}
 
 bool CANAdapter::begin(int csPin, int intPin, long speed) {
   _csPin = csPin;
@@ -14,9 +14,8 @@ bool CANAdapter::begin(int csPin, int intPin, long speed) {
     CAN0 = nullptr;
   }
   CAN0 = new MCP_CAN((uint8_t)_csPin);
-  // Use SPI pins according to wiring: SCK=IO18, MISO=IO19, MOSI=IO23
-  // ensuring MCP2515 is connected to these pins
-  SPI.begin(18, 19, 23);
+  // Use SPI pins according to wiring: SCK=IO9, SO(MISO)=IO20, SI(MOSI)=IO10
+  SPI.begin(9, 20, 10);
   if (CAN0->begin(MCP_STDEXT, CAN_500KBPS, MCP_8MHZ) == CAN_OK) {
     CAN0->setMode(MCP_NORMAL);
     return true;

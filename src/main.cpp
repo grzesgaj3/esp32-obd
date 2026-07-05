@@ -1,35 +1,30 @@
 #include <Arduino.h>
-#include <Wire.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
 #include "OBD.h"
 #include <Adafruit_NeoPixel.h>
 
-// Pins per wiring: CS -> IO5, INT -> IO4 (see provided mapping)
-const int CAN_CS_PIN = 5;
-const int CAN_INT_PIN = 4;
+// New wiring: INT -> IO8, SCK -> IO9, SI(MOSI) -> IO10, SO(MISO) -> IO20, CS -> IO21
+const int CAN_CS_PIN = 21;
+const int CAN_INT_PIN = 8;
 
-// SSD1306 configuration
-#define SCREEN_WIDTH 128
-#define SCREEN_HEIGHT 32
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
-
-// Addressable LED bar (configurable)
-const int LED_PIN = 27; // change this to the pin you wired the LED strip to
-const int NUM_LEDS = 10; // bar length
+// Addressable LED bar (WS2815)
+const int LED_PIN = 0;
+const int NUM_LEDS = 21;
+// WS2815: 12V, GRB ordering, 800KHz protocol. Ensure proper 12V power,
+// common GND with the ESP32, and use a level shifter on the data line
+// for reliable signaling.
 Adafruit_NeoPixel strip(NUM_LEDS, LED_PIN, NEO_GRB + NEO_KHZ800);
 
 OBD obd;
 // Configurable intervals (ms)
 unsigned long lastRequest = 0;
-unsigned long lastDisplay = 0;
-const unsigned long RPM_REQUEST_MIN_INTERVAL_MS = 100; // request RPM every 100ms (10 Hz)
-const unsigned long RPM_REQUEST_BACKOFF_MS = 500; // backoff interval when no response
-const unsigned long DISPLAY_REFRESH_MS = 100; // update display every 100ms (10 Hz)
+unsigned long lastSerialOutput = 0;
+const unsigned long RPM_REQUEST_MIN_INTERVAL_MS = 10;
+const unsigned long RPM_REQUEST_BACKOFF_MS = 500;
+const unsigned long SERIAL_REFRESH_MS = 250;
 unsigned long currentRequestInterval = RPM_REQUEST_MIN_INTERVAL_MS;
 
 // RPM -> LED mapping
-const uint16_t RPM_MAX = 9000; // top of scale
+const uint16_t RPM_MAX = 7000; // top of scale
 
 // Map RPM to LED bar and set colors (green -> yellow -> red) using NeoPixel
 static void hsvToRgb(uint8_t h, uint8_t s, uint8_t v, uint8_t &r, uint8_t &g, uint8_t &b) {
@@ -132,31 +127,56 @@ void updateLedBar(uint16_t rpm) {
   }
   strip.show();
 }
-bool displayOk = false;
+
+// Startup LED test animation to verify LEDs on boot
+void startupAnimation() {
+  uint8_t r, g, b;
+  const uint8_t savedBrightness = 180;
+
+  // full-bright wipe (white)
+  strip.setBrightness(255);
+  for (int i = 0; i < NUM_LEDS; ++i) {
+    strip.setPixelColor(i, strip.Color(255, 255, 255));
+    strip.show();
+    delay(60);
+  }
+  delay(200);
+
+  // quick off wipe
+  for (int i = 0; i < NUM_LEDS; ++i) {
+    strip.setPixelColor(i, 0);
+    strip.show();
+    delay(30);
+  }
+
+  // rainbow sweep using hsvToRgb
+  for (int step = 0; step < NUM_LEDS * 2; ++step) {
+    for (int i = 0; i < NUM_LEDS; ++i) {
+      uint8_t hue = (uint8_t)((i * 256 / NUM_LEDS + step * 8) & 0xFF);
+      hsvToRgb(hue, 220, 200, r, g, b);
+      strip.setPixelColor(i, strip.Color(r, g, b));
+    }
+    strip.show();
+    delay(50);
+  }
+
+  // clear and restore brightness
+  for (int i = 0; i < NUM_LEDS; ++i) strip.setPixelColor(i, 0);
+  strip.show();
+  strip.setBrightness(savedBrightness);
+}
 
 void setup() {
   Serial.begin(9600);
   delay(100);
-  Serial.println("Starting ESP32 OBD display");
-
-  // initialize I2C (common ESP32 pins SDA=21, SCL=22)
-  Wire.begin(22, 21);
-  if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
-    Serial.println("SSD1306 init failed");
-  } else {
-    displayOk = true;
-    display.clearDisplay();
-    display.setTextColor(SSD1306_WHITE);
-    display.setTextSize(1);
-    display.setCursor(0, 0);
-    display.println("SSD1306 OK");
-    display.display();
-  }
+  Serial.println("Starting ESP32 OBD");
 
   // init NeoPixel strip
   strip.begin();
   strip.setBrightness(180);
   strip.show();
+  // startup LED test
+  startupAnimation();
 
   if (!obd.begin(CAN_CS_PIN, CAN_INT_PIN)) {
     Serial.println("CAN init failed");
@@ -190,28 +210,14 @@ void loop() {
     Serial.print("Requested PID 0x0C @ "); Serial.print(millis()); Serial.print(" ms (interval "); Serial.print(currentRequestInterval); Serial.println(" ms)");
   }
 
-  if (now - lastDisplay > 250) {
-    lastDisplay = now;
+  if (now - lastSerialOutput > SERIAL_REFRESH_MS) {
+    lastSerialOutput = now;
     uint16_t rpm = obd.getRPM();
-    if (displayOk) {
-      display.clearDisplay();
-      display.setTextSize(2);
-      display.setCursor(0, 0);
-      if (rpm == 0) display.print("---"); else display.print(rpm);
-      display.print(" RPM");
-
-      display.setTextSize(1);
-      display.setCursor(0, 24);
-      if (obd.isSynced()) display.print("SYNC"); else display.print("NOT SYNC");
-      display.display();
-      // update LED bar to reflect RPM
-      updateLedBar(rpm);
-    } else {
-      // fallback to serial output if display not available
-      Serial.print("RPM: ");
-      Serial.print(rpm);
-      Serial.print("  ");
-      Serial.println(obd.isSynced() ? "SYNC" : "NOT SYNC");
-    }
+    Serial.print("RPM: ");
+    Serial.print(rpm);
+    Serial.print("  ");
+    Serial.println(obd.isSynced() ? "SYNC" : "NOT SYNC");
+    updateLedBar(rpm);
   }
 }
+

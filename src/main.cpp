@@ -18,7 +18,7 @@ OBD obd;
 // Configurable intervals (ms)
 unsigned long lastRequest = 0;
 unsigned long lastSerialOutput = 0;
-const unsigned long RPM_REQUEST_MIN_INTERVAL_MS = 10;
+const unsigned long RPM_REQUEST_MIN_INTERVAL_MS = 50;
 const unsigned long RPM_REQUEST_BACKOFF_MS = 200;
 const unsigned long SERIAL_REFRESH_MS = 250;
 unsigned long currentRequestInterval = RPM_REQUEST_MIN_INTERVAL_MS;

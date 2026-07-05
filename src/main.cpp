@@ -19,14 +19,14 @@ OBD obd;
 unsigned long lastRequest = 0;
 unsigned long lastSerialOutput = 0;
 const unsigned long RPM_REQUEST_MIN_INTERVAL_MS = 10;
-const unsigned long RPM_REQUEST_BACKOFF_MS = 500;
+const unsigned long RPM_REQUEST_BACKOFF_MS = 200;
 const unsigned long SERIAL_REFRESH_MS = 250;
 unsigned long currentRequestInterval = RPM_REQUEST_MIN_INTERVAL_MS;
 
 // RPM -> LED mapping
-const uint16_t RPM_MAX = 7000; // top of scale
+const uint16_t RPM_MAX = 7100; // top of scale
 
-// Map RPM to LED bar and set colors (green -> yellow -> red) using NeoPixel
+// Map RPM to LED bar — hue shifts blue -> green -> orange -> red
 static void hsvToRgb(uint8_t h, uint8_t s, uint8_t v, uint8_t &r, uint8_t &g, uint8_t &b) {
   float hf = h / 255.0f * 360.0f;
   float sf = s / 255.0f;
@@ -54,17 +54,16 @@ static void hsvToRgb(uint8_t h, uint8_t s, uint8_t v, uint8_t &r, uint8_t &g, ui
 float filteredRpm = 0.0f;
 const float RPM_SMOOTH_ALPHA = 0.25f; // 0..1, higher = less smoothing
 
-// Peak indicator
-int peakLed = 0;
-unsigned long peakTs = 0;
-const unsigned long PEAK_HOLD_MS = 300;
-const unsigned long PEAK_DECAY_MS = 800;
-
-unsigned long lastLedAnim = 0;
+// Over-rev / shift-light state
+bool overRev = false;
+unsigned long overRevStart = 0;
+const unsigned long OVER_REV_DELAY_MS = 500;
+unsigned long lastFlashToggle = 0;
+bool flashOn = true;
+const unsigned long FLASH_INTERVAL_MS = 200;
 
 void updateLedBar(uint16_t rpm) {
   unsigned long now = millis();
-  // smooth RPM for pleasant animation
   filteredRpm = filteredRpm * (1.0f - RPM_SMOOTH_ALPHA) + ((float)rpm) * RPM_SMOOTH_ALPHA;
 
   float ratio = (float)filteredRpm / (float)RPM_MAX;
@@ -74,57 +73,52 @@ void updateLedBar(uint16_t rpm) {
   int lit = (int)floor(scaled);
   float partial = scaled - lit;
 
-  // update peak indicator
-  if (lit > peakLed) {
-    peakLed = lit;
-    peakTs = now;
-  }
+  bool atMax = filteredRpm >= (float)RPM_MAX;
 
-  // animate LEDs with a comet/trail effect
-  const float TRAIL_DECAY = 0.55f; // per-step brightness decay
-  for (int i = 0; i < NUM_LEDS; ++i) {
-    float brightness = 0.0f;
-    if (i < lit) brightness = 1.0f; // fully lit
-    else if (i == lit) brightness = partial; // partial fill
-    else brightness = 0.0f;
-
-    // apply trail: closer to lit index -> brighter
-    int distance = lit - i;
-    if (distance > 0) brightness *= powf(TRAIL_DECAY, (float)distance);
-
-    // peak indicator overlay (bright dot that holds briefly)
-    if (peakLed > 0) {
-      if ((now - peakTs) < PEAK_HOLD_MS) {
-        if (i == peakLed - 1) brightness = max(brightness, 1.0f);
-      } else {
-        // decay after hold
-        unsigned long dec = now - (peakTs + PEAK_HOLD_MS);
-        if (dec < PEAK_DECAY_MS) {
-          float decayFactor = 1.0f - (float)dec / (float)PEAK_DECAY_MS;
-          if (i == peakLed - 1) brightness = max(brightness, decayFactor);
-        } else {
-          peakLed = max(0, peakLed - 1);
-          peakTs = now;
-        }
+  // --- over-rev detection ---
+  if (!overRev) {
+    if (atMax) {
+      if (overRevStart == 0) {
+        overRevStart = now;
+      } else if (now - overRevStart >= OVER_REV_DELAY_MS) {
+        overRev = true;
+        flashOn = true;
+        lastFlashToggle = now;
       }
+    } else {
+      overRevStart = 0;
     }
-
-    // idle breathing effect when RPM==0
-    if ((int)filteredRpm == 0) {
-      float breath = 0.5f + 0.5f * sinf((now % 2000) / 2000.0f * 2.0f * 3.14159f);
-      brightness *= breath * (i==0 ? 1.0f : 0.45f);
-    }
-
-    // compute hue shifting along the bar for visual richness
-    uint8_t baseHue = (uint8_t)map((int)filteredRpm, 0, RPM_MAX, 96, 0);
-    int hueShift = i * 6; // subtle gradient
-    uint8_t hue = (uint8_t)max(0, min(255, (int)baseHue - hueShift));
-    uint8_t val = (uint8_t)min(255, (int)(brightness * 255.0f));
-
-    uint8_t r,g,b;
-    hsvToRgb(hue, 220, val, r, g, b);
-    strip.setPixelColor(i, strip.Color(r, g, b));
+  } else if (!atMax) {
+    overRev = false;
+    overRevStart = 0;
   }
+
+  // --- render ---
+  if (!overRev) {
+    // Normal mode: progressive fill with RPM-based hue shift (blue -> red)
+    uint8_t hue = (uint8_t)map((int)filteredRpm, 0, RPM_MAX, 170, 0);
+    for (int i = 0; i < NUM_LEDS; ++i) {
+      float brightness = 0.0f;
+      if (i < lit) brightness = 1.0f;
+      else if (i == lit) brightness = partial;
+
+      uint8_t val = (uint8_t)(brightness * 255.0f);
+      uint8_t r, g, b;
+      hsvToRgb(hue, 220, val, r, g, b);
+      strip.setPixelColor(i, strip.Color(r, g, b));
+    }
+  } else {
+    // Over-rev mode: flash all LEDs red
+    if (now - lastFlashToggle >= FLASH_INTERVAL_MS) {
+      flashOn = !flashOn;
+      lastFlashToggle = now;
+    }
+    uint8_t val = flashOn ? 255 : 0;
+    for (int i = 0; i < NUM_LEDS; ++i) {
+      strip.setPixelColor(i, strip.Color(val, 0, 0));
+    }
+  }
+
   strip.show();
 }
 
